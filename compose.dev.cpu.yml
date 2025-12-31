@@ -1,21 +1,15 @@
 services:
   podly:
     container_name: podly-pure-podcasts
-    image: podly-pure-podcasts
+    image: ghcr.io/jdrbc/podly-pure-podcasts:main-lite
     volumes:
       - ./src/instance:/app/src/instance
+      - ./src/app/routes/config_routes.py:/app/src/app/routes/config_routes.py
+      - ./src/shared:/app/src/shared
+      - ./src/podcast_processor:/app/src/podcast_processor
+      - ./src/system_prompt.txt:/app/src/system_prompt.txt
     env_file:
       - ./.env.local
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        - BASE_IMAGE=${BASE_IMAGE:-python:3.11-slim}
-        - CUDA_VERSION=${CUDA_VERSION:-12.4.1}
-        - USE_GPU=${USE_GPU:-false}
-        - USE_GPU_NVIDIA=${USE_GPU_NVIDIA:-false}
-        - USE_GPU_AMD=${USE_GPU_AMD:-false}
-        - LITE_BUILD=${LITE_BUILD:-false}
     ports:
       - "5001:5001"
     environment:

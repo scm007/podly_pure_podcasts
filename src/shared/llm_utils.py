@@ -14,6 +14,8 @@ _MAX_COMPLETION_TOKEN_MODELS: Final[tuple[str, ...]] = (
     "o1_",
     "o1/",
     "chatgpt-4o-latest",
+    "gpt-5-mini-2025-08-07",
+    "gpt-5-mini",
 )
 
 

@@ -6,7 +6,7 @@ import flask
 import litellm
 from flask import Blueprint, jsonify, request
 from groq import Groq
-from openai import OpenAI
+from openai import OpenAI, NotFoundError
 
 from app.auth.guards import require_admin
 from app.config_store import read_combined, to_pydantic_config
@@ -471,7 +471,14 @@ def api_test_llm() -> flask.Response:
         }
 
         if model_uses_max_completion_tokens(model):
-            completion_kwargs["max_completion_tokens"] = 1
+            # For o1/gpt-5 style reasoning models, "max_completion_tokens"
+            # often includes the reasoning tokens. Setting this too low (e.g. 1 or 4096)
+            # causes the API to reject the request or fail immediately.
+            # We use a safe high default for the connection probe.
+            if "gpt-5-mini" in model.lower():
+                completion_kwargs["max_completion_tokens"] = 65536
+            else:
+                completion_kwargs["max_completion_tokens"] = 4096
         else:
             completion_kwargs["max_tokens"] = 1
 
@@ -585,7 +592,19 @@ def _test_remote_whisper(whisper_cfg: Dict[str, Any]) -> flask.Response:
     if not api_key:
         return _make_error_response("Missing whisper.api_key")
 
-    _ = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout).models.list()
+    try:
+        _ = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout).models.list()
+    except NotFoundError:
+        # whisper.cpp (and others) may not implement /v1/models, returning 404.
+        # If we got a 404, we connected successfully to the server.
+        logger.warning(
+            "Remote whisper endpoint returned 404 for models.list(). "
+            "Assuming valid connection to limited server (e.g. whisper.cpp)."
+        )
+        return _make_success_response(
+            "Remote whisper connection OK (models list unavailable)", base_url=base_url
+        )
+
     return _make_success_response("Remote whisper connection OK", base_url=base_url)
 
 
