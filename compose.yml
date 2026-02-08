@@ -1,8 +1,31 @@
 services:
-  podly:
-    container_name: podly-pure-podcasts
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     ports:
       - "5001:5001"
+    volumes:
+      - gluetun-data:/gluetun
+    env_file:
+      - ./.env.local
+    environment:
+      - VPN_SERVICE_PROVIDER=nordvpn
+      - VPN_TYPE=openvpn
+      - FIREWALL_OUTBOUND_SUBNETS=192.168.0.0/16,172.16.0.0/12,10.0.0.0/8
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  podly:
+    container_name: podly-pure-podcasts
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
     image: ghcr.io/${REPO_OWNER:-jdrbc}/podly-pure-podcasts:${BRANCH:-main-latest}
     volumes:
       - ./src/instance:/app/src/instance
@@ -30,3 +53,6 @@ services:
 networks:
   default:
     name: podly-pure-podcasts-network
+
+volumes:
+  gluetun-data:
