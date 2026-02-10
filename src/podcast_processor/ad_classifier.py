@@ -880,14 +880,16 @@ class AdClassifier:
     def _adjust_confidence(
         self, *, base_confidence: float, content_type: Optional[str]
     ) -> float:
-        """Demote confidence for self-promo/educational contexts."""
+        """Demote confidence for technical discussions or transitions."""
         if not content_type:
             return base_confidence
 
-        if content_type in {"educational/self_promo", "technical_discussion"}:
+        # Only penalize technical discussion, NOT self-promo if we want to catch it
+        if content_type == "technical_discussion":
             return max(0.0, base_confidence - 0.25)
         if content_type == "transition":
             return max(0.0, base_confidence - 0.1)
+        
         return base_confidence
 
     def _maybe_add_preroll_context(
