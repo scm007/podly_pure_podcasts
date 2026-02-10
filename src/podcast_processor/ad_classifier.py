@@ -653,19 +653,7 @@ class AdClassifier:
         )
 
         if uses_max_completion_tokens:
-            # For o1-mini / gpt-5-mini style reasoning models, we need a high token limit
-            # because the limit includes reasoning tokens.
-            # If the user hasn't explicitly set a very high limit (e.g. > 10k), we boost it.
-            if (
-                "gpt-5-mini" in model_call_obj.model_name.lower()
-                and self.config.openai_max_tokens < 10000
-            ):
-                completion_args["max_completion_tokens"] = 65536
-                self.logger.info(
-                    f"Boosting max_completion_tokens to 65536 for {model_call_obj.model_name}"
-                )
-            else:
-                completion_args["max_completion_tokens"] = self.config.openai_max_tokens
+            completion_args["max_completion_tokens"] = self.config.openai_max_tokens
         else:
             # For older models and non-OpenAI models, use max_tokens
             completion_args["max_tokens"] = self.config.openai_max_tokens
