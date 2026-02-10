@@ -26,7 +26,7 @@ services:
     depends_on:
       gluetun:
         condition: service_healthy
-    image: ghcr.io/${REPO_OWNER:-jdrbc}/podly-pure-podcasts:${BRANCH:-main-latest}
+    image: ghcr.io/podly-pure-podcasts/podly-pure-podcasts:${BRANCH:-main-latest}
     volumes:
       - ./src/instance:/app/src/instance
     env_file:

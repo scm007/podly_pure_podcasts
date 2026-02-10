@@ -28,9 +28,11 @@ from .feeds import (
     toggle_whitelist_all_for_feed_action as toggle_whitelist_all_for_feed_action,
 )
 from .feeds import touch_feed_access_token_action as touch_feed_access_token_action
+from .feeds import update_feed_settings_action as update_feed_settings_action
 from .feeds import (
     whitelist_latest_post_for_feed_action as whitelist_latest_post_for_feed_action,
 )
+from .feeds import whitelist_post_action as whitelist_post_action
 from .jobs import cancel_existing_jobs_action as cancel_existing_jobs_action
 from .jobs import cleanup_stale_jobs_action as cleanup_stale_jobs_action
 from .jobs import clear_all_jobs_action as clear_all_jobs_action
@@ -58,5 +60,6 @@ from .users import (
 )
 from .users import set_user_billing_fields_action as set_user_billing_fields_action
 from .users import set_user_role_action as set_user_role_action
+from .users import update_user_last_active_action as update_user_last_active_action
 from .users import update_user_password_action as update_user_password_action
 from .users import upsert_discord_user_action as upsert_discord_user_action

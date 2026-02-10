@@ -25,6 +25,9 @@ from flask import (
 )
 from flask.typing import ResponseReturnValue
 
+from app.auth import is_auth_enabled
+from app.auth.guards import require_admin
+from app.auth.service import update_user_last_active
 from app.extensions import db
 from app.feeds import (
     add_or_refresh_feed,
@@ -217,6 +220,10 @@ def add_feed() -> ResponseReturnValue:
             created, previous_count = _ensure_user_feed_membership(feed, user.id)
             if created and previous_count == 0:
                 _whitelist_latest_for_first_member(feed, getattr(user, "id", None))
+        elif not is_auth_enabled():
+            # In no-auth mode, if this feed has no members, trigger whitelisting for the latest post.
+            if UserFeed.query.filter_by(feed_id=feed.id).count() == 0:
+                _whitelist_latest_for_first_member(feed, None)
 
         app = cast(Any, current_app)._get_current_object()
         Thread(
@@ -361,6 +368,9 @@ def search_feeds() -> ResponseReturnValue:
 
 @feed_bp.route("/feed/<int:f_id>", methods=["GET"])
 def get_feed(f_id: int) -> Response:
+    if hasattr(g, "current_user") and g.current_user:
+        update_user_last_active(g.current_user.id)
+
     feed = Feed.query.get_or_404(f_id)
 
     # Refresh the feed
@@ -434,6 +444,9 @@ def refresh_feed_endpoint(f_id: int) -> ResponseReturnValue:
     """
     Refresh the specified feed and return a JSON response indicating the result.
     """
+    if hasattr(g, "current_user") and g.current_user:
+        update_user_last_active(g.current_user.id)
+
     feed = Feed.query.get_or_404(f_id)
     feed_title = feed.title
     app = cast(Any, current_app)._get_current_object()
@@ -456,6 +469,45 @@ def refresh_feed_endpoint(f_id: int) -> ResponseReturnValue:
     )
 
 
+@feed_bp.route("/api/feeds/<int:feed_id>/settings", methods=["PATCH"])
+def update_feed_settings_endpoint(feed_id: int) -> ResponseReturnValue:
+    _, error_response = require_admin("update feed settings")
+    if error_response is not None:
+        return error_response
+
+    payload = request.get_json(silent=True) or {}
+    if "auto_whitelist_new_episodes_override" not in payload:
+        return jsonify({"error": "No settings provided."}), 400
+
+    override = payload.get("auto_whitelist_new_episodes_override")
+    if override is not None and not isinstance(override, bool):
+        return (
+            jsonify(
+                {
+                    "error": "auto_whitelist_new_episodes_override must be a boolean or null."
+                }
+            ),
+            400,
+        )
+
+    result = writer_client.action(
+        "update_feed_settings",
+        {"feed_id": feed_id, "auto_whitelist_new_episodes_override": override},
+        wait=True,
+    )
+    if result is None or not result.success:
+        return (
+            jsonify({"error": getattr(result, "error", "Failed to update feed")}),
+            500,
+        )
+
+    feed = db.session.get(Feed, feed_id)
+    if feed is None:
+        return jsonify({"error": "Feed not found"}), 404
+
+    return jsonify(_serialize_feed(feed, current_user=getattr(g, "current_user", None)))
+
+
 def _refresh_feed_background(app: Flask, feed_id: int) -> None:
     with app.app_context():
         feed = db.session.get(Feed, feed_id)
@@ -475,6 +527,9 @@ def _refresh_feed_background(app: Flask, feed_id: int) -> None:
 @feed_bp.route("/api/feeds/refresh-all", methods=["POST"])
 def refresh_all_feeds_endpoint() -> Response:
     """Trigger a refresh for all feeds and enqueue pending jobs."""
+    if hasattr(g, "current_user") and g.current_user:
+        update_user_last_active(g.current_user.id)
+
     result = get_jobs_manager().start_refresh_all_feeds(trigger="manual_refresh")
     feed_count = Feed.query.count()
     return jsonify(
@@ -690,8 +745,7 @@ def get_user_aggregate_feed(user_id: int) -> Response:
     # If auth is disabled, this is public.
     # If auth is enabled, middleware ensures we have a valid token for this user_id.
 
-    settings = current_app.config.get("AUTH_SETTINGS")
-    if settings and settings.require_auth:
+    if is_auth_enabled():
         current = getattr(g, "current_user", None)
         if current is None:
             return make_response(("Authentication required", 401))
@@ -700,6 +754,12 @@ def get_user_aggregate_feed(user_id: int) -> Response:
 
     user = db.session.get(User, user_id)
     if not user:
+        if user_id == 0 and not is_auth_enabled():
+            # Support anonymous aggregate feed when auth is disabled
+            xml_content = generate_aggregate_feed_xml(None)
+            response = make_response(xml_content)
+            response.headers["Content-Type"] = "application/rss+xml"
+            return response
         return make_response(("User not found", 404))
 
     xml_content = generate_aggregate_feed_xml(user)
@@ -713,12 +773,11 @@ def get_aggregate_feed_redirect() -> ResponseReturnValue:
     """Convenience endpoint to redirect to the user's aggregate feed."""
     settings = current_app.config.get("AUTH_SETTINGS")
 
-    # Case 1: Auth Disabled -> Redirect to Admin User (Single User Mode)
+    # Case 1: Auth Disabled -> Redirect to Admin User (or ID 0 if none exist)
     if not settings or not settings.require_auth:
         admin = User.query.filter_by(role="admin").first()
-        if not admin:
-            return make_response(("No admin user found to serve aggregate feed", 404))
-        return redirect(url_for("feed.get_user_aggregate_feed", user_id=admin.id))
+        user_id = admin.id if admin else 0
+        return redirect(url_for("feed.get_user_aggregate_feed", user_id=user_id))
 
     # Case 2: Auth Enabled -> Require explicit user link
     # We cannot easily determine "current user" for a podcast player without a token.
@@ -849,16 +908,24 @@ def _serialize_feed(
     *,
     current_user: Optional[User] = None,
 ) -> dict[str, Any]:
+    auth_enabled = is_auth_enabled()
     member_ids = [membership.user_id for membership in getattr(feed, "user_feeds", [])]
-    is_member = bool(current_user and getattr(current_user, "id", None) in member_ids)
+
+    # In no-auth mode, everyone is functionally a member.
+    is_member = not auth_enabled or bool(
+        current_user and getattr(current_user, "id", None) in member_ids
+    )
 
     # Hack: Always treat Feed 1 as a member
-    if feed.id == 1 and current_user:
+    if feed.id == 1 and (current_user or not auth_enabled):
         is_member = True
 
     is_active_subscription = False
-    if is_member and current_user:
-        is_active_subscription = is_feed_active_for_user(feed.id, current_user)
+    if is_member:
+        if current_user:
+            is_active_subscription = is_feed_active_for_user(feed.id, current_user)
+        elif not auth_enabled:
+            is_active_subscription = True
 
     feed_payload = {
         "id": feed.id,
@@ -867,6 +934,9 @@ def _serialize_feed(
         "description": feed.description,
         "author": feed.author,
         "image_url": feed.image_url,
+        "auto_whitelist_new_episodes_override": getattr(
+            feed, "auto_whitelist_new_episodes_override", None
+        ),
         "posts_count": len(feed.posts),
         "member_count": len(member_ids),
         "is_member": is_member,

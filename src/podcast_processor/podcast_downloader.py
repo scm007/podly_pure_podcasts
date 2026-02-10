@@ -4,7 +4,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional, Set
 
 import requests
 import validators
@@ -114,13 +114,65 @@ def sanitize_title(title: str) -> str:
 
 def find_audio_link(entry: Any) -> str:
     """Find the audio link in a feed entry."""
-    for link in entry.links:
-        if link.type == "audio/mpeg":
-            href = link.href
-            assert isinstance(href, str)
-            return href
+    audio_mime_types: Set[str] = {
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/x-mp3",
+        "audio/mpeg3",
+        "audio/mp4",
+        "audio/m4a",
+        "audio/x-m4a",
+        "audio/aac",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/ogg",
+        "audio/opus",
+        "audio/flac",
+    }
 
-    return str(entry.id)
+    for url in _iter_enclosure_audio_urls(entry, audio_mime_types):
+        return url
+    for url in _iter_link_audio_urls(entry, audio_mime_types, match_any_audio=False):
+        return url
+    for url in _iter_link_audio_urls(entry, audio_mime_types, match_any_audio=True):
+        return url
+
+    return str(getattr(entry, "id", ""))
+
+
+def _iter_enclosure_audio_urls(entry: Any, audio_mime_types: Set[str]) -> Iterator[str]:
+    enclosures = getattr(entry, "enclosures", None) or []
+    for enclosure in enclosures:
+        enc_type = (getattr(enclosure, "type", "") or "").lower()
+        if enc_type not in audio_mime_types:
+            continue
+        href = getattr(enclosure, "href", None)
+        if href:
+            yield str(href)
+        url = getattr(enclosure, "url", None)
+        if url:
+            yield str(url)
+
+
+def _iter_link_audio_urls(
+    entry: Any,
+    audio_mime_types: Set[str],
+    *,
+    match_any_audio: bool,
+) -> Iterator[str]:
+    links = getattr(entry, "links", None) or []
+    for link in links:
+        link_type = (getattr(link, "type", "") or "").lower()
+        if match_any_audio:
+            if not link_type.startswith("audio/"):
+                continue
+        else:
+            if link_type not in audio_mime_types:
+                continue
+
+        href = getattr(link, "href", None)
+        if href:
+            yield str(href)
 
 
 # Backward compatibility - create a default instance

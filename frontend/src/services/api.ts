@@ -14,6 +14,7 @@ import type {
   ConfigResponse,
   BillingSummary,
   LandingStatus,
+  PagedResult,
 } from '../types';
 
 const API_BASE_URL = '';
@@ -67,8 +68,17 @@ export const feedsApi = {
     return response.data;
   },
 
-  getFeedPosts: async (feedId: number): Promise<Episode[]> => {
-    const response = await api.get(`/api/feeds/${feedId}/posts`);
+  getFeedPosts: async (
+    feedId: number,
+    options?: { page?: number; pageSize?: number; whitelistedOnly?: boolean }
+  ): Promise<PagedResult<Episode>> => {
+    const response = await api.get(`/api/feeds/${feedId}/posts`, {
+      params: {
+        page: options?.page,
+        page_size: options?.pageSize,
+        whitelisted_only: options?.whitelistedOnly,
+      },
+    });
     return response.data;
   },
 
@@ -127,6 +137,14 @@ export const feedsApi = {
 
   leaveFeed: async (feedId: number): Promise<{ status: string; feed_id: number }> => {
     const response = await api.post(`/api/feeds/${feedId}/leave`);
+    return response.data;
+  },
+
+  updateFeedSettings: async (
+    feedId: number,
+    settings: { auto_whitelist_new_episodes_override: boolean | null }
+  ): Promise<Feed> => {
+    const response = await api.patch(`/api/feeds/${feedId}/settings`, settings);
     return response.data;
   },
 
@@ -273,6 +291,7 @@ export const feedsApi = {
       end_time: number;
       text: string;
       primary_label: 'ad' | 'content';
+      mixed: boolean;
       identifications: Array<{
         id: number;
         label: string;
@@ -290,6 +309,7 @@ export const feedsApi = {
       segment_start_time: number;
       segment_end_time: number;
       segment_text: string;
+      mixed: boolean;
     }>;
   }> => {
     const response = await api.get(`/api/posts/${guid}/stats`);
@@ -297,8 +317,11 @@ export const feedsApi = {
   },
 
   // Legacy aliases for backward compatibility
-  getFeedEpisodes: async (feedId: number): Promise<Episode[]> => {
-    return feedsApi.getFeedPosts(feedId);
+  getFeedEpisodes: async (
+    feedId: number,
+    options?: { page?: number; pageSize?: number; whitelistedOnly?: boolean }
+  ): Promise<PagedResult<Episode>> => {
+    return feedsApi.getFeedPosts(feedId, options);
   },
 
   toggleEpisodeWhitelist: async (guid: string, whitelisted: boolean): Promise<{ processing_job?: { status: string; job_id?: string; message?: string } }> => {
@@ -369,6 +392,7 @@ export const feedsApi = {
       end_time: number;
       text: string;
       primary_label: 'ad' | 'content';
+      mixed: boolean;
       identifications: Array<{
         id: number;
         label: string;
@@ -386,6 +410,7 @@ export const feedsApi = {
       segment_start_time: number;
       segment_end_time: number;
       segment_text: string;
+      mixed: boolean;
     }>;
   }> => {
     return feedsApi.getPostStats(guid);
@@ -439,7 +464,7 @@ export const authApi = {
     return response.data;
   },
 
-  listUsers: async (): Promise<{ users: Array<{ id: number; username: string; role: string; created_at: string; updated_at: string; feed_allowance?: number; feed_subscription_status?: string; manual_feed_allowance?: number | null }> }> => {
+  listUsers: async (): Promise<{ users: Array<{ id: number; username: string; role: string; created_at: string; updated_at: string; last_active?: string | null; feed_allowance?: number; feed_subscription_status?: string; manual_feed_allowance?: number | null }> }> => {
     const response = await api.get('/api/auth/users');
     return response.data;
   },
@@ -552,8 +577,8 @@ export const billingApi = {
     const response = await api.get('/api/billing/summary');
     return response.data;
   },
-  setQuantity: async (
-    quantity: number,
+  updateSubscription: async (
+    amount: number,
     options?: { subscriptionId?: string | null }
   ): Promise<
     BillingSummary & {
@@ -562,8 +587,8 @@ export const billingApi = {
       requires_stripe_checkout?: boolean;
     }
   > => {
-    const response = await api.post('/api/billing/quantity', {
-      quantity,
+    const response = await api.post('/api/billing/subscription', {
+      amount,
       subscription_id: options?.subscriptionId,
     });
     return response.data;

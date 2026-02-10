@@ -21,6 +21,8 @@ from app.feeds import (
     make_post,
     refresh_feed,
 )
+from app.models import Feed, Post
+from app.runtime_config import config as runtime_config
 
 logger = logging.getLogger("global_logger")
 
@@ -78,6 +80,7 @@ class MockFeed:
         self.image_url = image_url
         self.posts = []
         self.user_feeds = []
+        self.auto_whitelist_new_episodes_override = None
 
 
 @pytest.fixture
@@ -177,11 +180,15 @@ def test_refresh_feed(mock_db_session):
     mock_db_session.commit.assert_called_once()
 
 
-def test_should_auto_whitelist_new_posts_requires_members(monkeypatch, mock_feed):
+def test_should_auto_whitelist_new_posts_requires_members(
+    monkeypatch, mock_feed, mock_db_session
+):
     monkeypatch.setattr(
         "app.feeds.config",
         SimpleNamespace(automatically_whitelist_new_episodes=True),
     )
+    monkeypatch.setattr("app.auth.is_auth_enabled", lambda: True)
+    mock_db_session.query.return_value.first.return_value = (1,)
     assert _should_auto_whitelist_new_posts(mock_feed) is False
 
 
@@ -191,15 +198,20 @@ def test_should_auto_whitelist_new_posts_true_with_members(monkeypatch, mock_fee
         "app.feeds.config",
         SimpleNamespace(automatically_whitelist_new_episodes=True),
     )
+    monkeypatch.setattr("app.auth.is_auth_enabled", lambda: True)
     monkeypatch.setattr("app.feeds.is_feed_active_for_user", lambda *args: True)
     assert _should_auto_whitelist_new_posts(mock_feed) is True
 
 
-def test_should_auto_whitelist_requires_members(monkeypatch, mock_feed, mock_post):
+def test_should_auto_whitelist_requires_members(
+    monkeypatch, mock_feed, mock_post, mock_db_session
+):
     monkeypatch.setattr(
         "app.feeds.config",
         SimpleNamespace(automatically_whitelist_new_episodes=True),
     )
+    monkeypatch.setattr("app.auth.is_auth_enabled", lambda: True)
+    mock_db_session.query.return_value.first.return_value = (1,)
     mock_feed.user_feeds = []
     assert _should_auto_whitelist_new_posts(mock_feed, mock_post) is False
 
@@ -209,9 +221,50 @@ def test_should_auto_whitelist_with_members(monkeypatch, mock_feed, mock_post):
         "app.feeds.config",
         SimpleNamespace(automatically_whitelist_new_episodes=True),
     )
+    monkeypatch.setattr("app.auth.is_auth_enabled", lambda: True)
     monkeypatch.setattr("app.feeds.is_feed_active_for_user", lambda *args: True)
     mock_feed.user_feeds = [mock.MagicMock()]
     assert _should_auto_whitelist_new_posts(mock_feed, mock_post) is True
+
+
+def test_should_auto_whitelist_true_when_auth_disabled(monkeypatch, mock_feed):
+    monkeypatch.setattr(
+        "app.feeds.config",
+        SimpleNamespace(automatically_whitelist_new_episodes=True),
+    )
+    monkeypatch.setattr("app.auth.is_auth_enabled", lambda: False)
+    assert _should_auto_whitelist_new_posts(mock_feed) is True
+
+
+def test_should_auto_whitelist_true_when_no_users(
+    monkeypatch, mock_feed, mock_db_session
+):
+    monkeypatch.setattr(
+        "app.feeds.config",
+        SimpleNamespace(automatically_whitelist_new_episodes=True),
+    )
+    monkeypatch.setattr("app.auth.is_auth_enabled", lambda: True)
+    mock_db_session.query.return_value.first.return_value = None
+    mock_feed.user_feeds = []
+    assert _should_auto_whitelist_new_posts(mock_feed) is True
+
+
+def test_should_auto_whitelist_respects_feed_override_true(monkeypatch, mock_feed):
+    monkeypatch.setattr(
+        "app.feeds.config",
+        SimpleNamespace(automatically_whitelist_new_episodes=False),
+    )
+    mock_feed.auto_whitelist_new_episodes_override = True
+    assert _should_auto_whitelist_new_posts(mock_feed) is True
+
+
+def test_should_auto_whitelist_respects_feed_override_false(monkeypatch, mock_feed):
+    monkeypatch.setattr(
+        "app.feeds.config",
+        SimpleNamespace(automatically_whitelist_new_episodes=True),
+    )
+    mock_feed.auto_whitelist_new_episodes_override = False
+    assert _should_auto_whitelist_new_posts(mock_feed) is False
 
 
 @mock.patch("app.feeds.writer_client")
@@ -516,34 +569,137 @@ def test_get_base_url_localhost():
 
 
 @mock.patch("app.feeds.feed_item")
-def test_generate_feed_xml(mock_feed_item, mock_feed, mock_post, app):
-    # Set up mocks
-    mock_feed.posts = [mock_post]
+@mock.patch("app.feeds.PyRSS2Gen.Image")
+@mock.patch("app.feeds.PyRSS2Gen.RSS2")
+def test_generate_feed_xml_filters_processed_whitelisted(
+    mock_rss_2, mock_image, mock_feed_item, app
+):
+    # Use real models to verify query filtering logic
+    with app.app_context():
+        original_flag = getattr(runtime_config, "autoprocess_on_download", False)
+        runtime_config.autoprocess_on_download = False
+        try:
+            feed = Feed(rss_url="http://example.com/feed", title="Feed 1")
+            db.session.add(feed)
+            db.session.commit()
 
-    mock_rss_item = mock.MagicMock(spec=PyRSS2Gen.RSSItem)
-    mock_feed_item.return_value = mock_rss_item
+            processed = Post(
+                feed_id=feed.id,
+                title="Processed",
+                guid="good",
+                download_url="http://example.com/good.mp3",
+                processed_audio_path="/tmp/good.mp3",
+                whitelisted=True,
+            )
+            unprocessed = Post(
+                feed_id=feed.id,
+                title="Unprocessed",
+                guid="bad1",
+                download_url="http://example.com/bad1.mp3",
+                processed_audio_path=None,
+                whitelisted=True,
+            )
+            not_whitelisted = Post(
+                feed_id=feed.id,
+                title="Not Whitelisted",
+                guid="bad2",
+                download_url="http://example.com/bad2.mp3",
+                processed_audio_path="/tmp/bad2.mp3",
+                whitelisted=False,
+            )
 
-    # Mock PyRSS2Gen.RSS2
-    with (
-        app.app_context(),
-        mock.patch("app.feeds.PyRSS2Gen.RSS2") as mock_rss_2,
-        mock.patch("app.feeds.PyRSS2Gen.Image"),
-    ):
-        mock_rss = mock_rss_2.return_value
-        mock_rss.to_xml.return_value = "<rss></rss>"
+            db.session.add_all([processed, unprocessed, not_whitelisted])
+            db.session.commit()
 
-        result = generate_feed_xml(mock_feed)
+            mock_feed_item.side_effect = (
+                lambda post, prepend_feed_title=False: mock.MagicMock(
+                    post_guid=post.guid
+                )
+            )
+            mock_rss = mock_rss_2.return_value
+            mock_rss.to_xml.return_value = "<rss></rss>"
 
-    # Check that feed_item was called for each post
-    mock_feed_item.assert_called_once_with(mock_post)
+            result = generate_feed_xml(feed)
 
-    # Check that RSS2 was created correctly
-    mock_rss_2.assert_called_once()
+            called_posts = [call.args[0] for call in mock_feed_item.call_args_list]
+            assert called_posts == [processed]
 
-    # Check that to_xml was called
-    mock_rss.to_xml.assert_called_once_with("utf-8")
+            mock_rss_2.assert_called_once()
+            mock_rss.to_xml.assert_called_once_with("utf-8")
+            assert result == "<rss></rss>"
+        finally:
+            runtime_config.autoprocess_on_download = original_flag
 
-    assert result == "<rss></rss>"
+
+@mock.patch("app.feeds.feed_item")
+@mock.patch("app.feeds.PyRSS2Gen.Image")
+@mock.patch("app.feeds.PyRSS2Gen.RSS2")
+def test_generate_feed_xml_includes_all_when_autoprocess_enabled(
+    mock_rss_2, mock_image, mock_feed_item, app
+):
+    with app.app_context():
+        original_flag = getattr(runtime_config, "autoprocess_on_download", False)
+        runtime_config.autoprocess_on_download = True
+        try:
+            feed = Feed(rss_url="http://example.com/feed", title="Feed 1")
+            db.session.add(feed)
+            db.session.commit()
+
+            processed = Post(
+                feed_id=feed.id,
+                title="Processed",
+                guid="good",
+                download_url="http://example.com/good.mp3",
+                processed_audio_path="/tmp/good.mp3",
+                whitelisted=True,
+                release_date=datetime.datetime(
+                    2024, 1, 3, tzinfo=datetime.timezone.utc
+                ),
+            )
+            unprocessed = Post(
+                feed_id=feed.id,
+                title="Unprocessed",
+                guid="bad1",
+                download_url="http://example.com/bad1.mp3",
+                processed_audio_path=None,
+                whitelisted=True,
+                release_date=datetime.datetime(
+                    2024, 1, 2, tzinfo=datetime.timezone.utc
+                ),
+            )
+            not_whitelisted = Post(
+                feed_id=feed.id,
+                title="Not Whitelisted",
+                guid="bad2",
+                download_url="http://example.com/bad2.mp3",
+                processed_audio_path="/tmp/bad2.mp3",
+                whitelisted=False,
+                release_date=datetime.datetime(
+                    2024, 1, 1, tzinfo=datetime.timezone.utc
+                ),
+            )
+
+            db.session.add_all([processed, unprocessed, not_whitelisted])
+            db.session.commit()
+
+            mock_feed_item.side_effect = (
+                lambda post, prepend_feed_title=False: mock.MagicMock(
+                    post_guid=post.guid
+                )
+            )
+            mock_rss = mock_rss_2.return_value
+            mock_rss.to_xml.return_value = "<rss></rss>"
+
+            result = generate_feed_xml(feed)
+
+            called_posts = [call.args[0] for call in mock_feed_item.call_args_list]
+            assert called_posts == [processed, unprocessed, not_whitelisted]
+
+            mock_rss_2.assert_called_once()
+            mock_rss.to_xml.assert_called_once_with("utf-8")
+            assert result == "<rss></rss>"
+        finally:
+            runtime_config.autoprocess_on_download = original_flag
 
 
 @mock.patch("app.feeds.Post")

@@ -7,9 +7,8 @@
 ```bash
 chmod +x run_podly_docker.sh
 ./run_podly_docker.sh --build
-./run_podly_docker.sh # foreground with logs
-# or detached
-./run_podly_docker.sh -d
+./run_podly_docker.sh # foreground with logs 
+./run_podly_docker.sh -d # or detached
 ```
 
 This automatically detects NVIDIA GPUs and uses them if available.
@@ -129,6 +128,19 @@ pipenv run flask --app ./src/main.py db migrate -m "[change description]"
 
 On next launch, the database updates automatically.
 
+## Releases and Commit Messages
+
+This repo uses `semantic-release` to automate versioning and GitHub releases. It relies on
+Conventional Commits to determine the next version.
+
+For pull requests, include **at least one** commit that follows the Conventional Commit format:
+
+- `feat: add new episode filter`
+- `fix(api): handle empty feed`
+- `chore: update dependencies`
+
+If no Conventional Commit is present, the release pipeline will have nothing to publish.
+
 ## Docker Support
 
 Podly can be run in Docker with support for both NVIDIA GPU and non-NVIDIA environments.
@@ -217,6 +229,7 @@ We welcome contributions to Podly! Here's how you can help:
    ```bash
    git checkout -b feature/your-feature-name
    ```
+4. Create a pull request with a target branch of Preview
 
 #### Application Ports
 

@@ -1,7 +1,8 @@
+from datetime import datetime
 from typing import Any, Dict
 
 from app.extensions import db
-from app.models import User
+from app.models import FeedAccessToken, User
 
 
 def create_user_action(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -49,6 +50,18 @@ def delete_user_action(params: Dict[str, Any]) -> Dict[str, Any]:
     user = db.session.get(User, int(user_id))
     if not user:
         return {"deleted": False}
+
+    # FeedAccessToken.user_id is non-nullable; without cascading deletes SQLAlchemy
+    # will attempt to NULL the FK when deleting a User, causing an IntegrityError.
+    # Delete tokens explicitly as part of the writer action.
+    tokens = (
+        db.session.query(FeedAccessToken)
+        .filter(FeedAccessToken.user_id == user.id)
+        .all()
+    )
+    for token in tokens:
+        db.session.delete(token)
+
     db.session.delete(user)
     return {"deleted": True}
 
@@ -169,3 +182,17 @@ def set_user_billing_by_customer_id_action(params: Dict[str, Any]) -> Dict[str, 
 
     db.session.flush()
     return {"updated": True, "user_id": user.id}
+
+
+def update_user_last_active_action(params: Dict[str, Any]) -> Dict[str, Any]:
+    user_id = params.get("user_id")
+    if not user_id:
+        raise ValueError("user_id is required")
+
+    user = db.session.get(User, int(user_id))
+    if not user:
+        raise ValueError(f"User {user_id} not found")
+
+    user.last_active = datetime.utcnow()
+    db.session.flush()
+    return {"user_id": user.id, "last_active": user.last_active.isoformat()}

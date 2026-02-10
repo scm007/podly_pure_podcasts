@@ -46,6 +46,9 @@ class CommandExecutor:
         self.register_action("refresh_feed", writer_actions.refresh_feed_action)
         self.register_action("add_feed", writer_actions.add_feed_action)
         self.register_action(
+            "update_feed_settings", writer_actions.update_feed_settings_action
+        )
+        self.register_action(
             "clear_post_processing_data",
             writer_actions.clear_post_processing_data_action,
         )
@@ -77,6 +80,10 @@ class CommandExecutor:
         self.register_action(
             "toggle_whitelist_all_for_feed",
             writer_actions.toggle_whitelist_all_for_feed_action,
+        )
+        self.register_action(
+            "whitelist_post",
+            writer_actions.whitelist_post_action,
         )
         self.register_action(
             "create_dev_test_feed", writer_actions.create_dev_test_feed_action
@@ -126,6 +133,9 @@ class CommandExecutor:
         )
         self.register_action(
             "replace_identifications", writer_actions.replace_identifications_action
+        )
+        self.register_action(
+            "update_user_last_active", writer_actions.update_user_last_active_action
         )
 
     def _discover_models(self) -> Dict[str, Any]:

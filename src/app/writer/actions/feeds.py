@@ -106,6 +106,24 @@ def add_feed_action(params: Dict[str, Any]) -> Dict[str, Any]:
     return {"feed_id": feed.id}
 
 
+def update_feed_settings_action(params: Dict[str, Any]) -> Dict[str, Any]:
+    feed_id = params.get("feed_id")
+    if not feed_id:
+        raise ValueError("feed_id is required")
+
+    feed = db.session.get(Feed, int(feed_id))
+    if not feed:
+        raise ValueError(f"Feed {feed_id} not found")
+
+    if "auto_whitelist_new_episodes_override" in params:
+        feed.auto_whitelist_new_episodes_override = params.get(
+            "auto_whitelist_new_episodes_override"
+        )
+
+    db.session.flush()
+    return {"feed_id": feed.id}
+
+
 def increment_download_count_action(params: Dict[str, Any]) -> Dict[str, Any]:
     post_id = params.get("post_id")
     if not post_id:
@@ -117,6 +135,17 @@ def increment_download_count_action(params: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     return {"post_id": post_id, "updated": updated}
+
+
+def whitelist_post_action(params: Dict[str, Any]) -> Dict[str, Any]:
+    post_id = params.get("post_id")
+    if not post_id:
+        raise ValueError("post_id is required")
+
+    updated = Post.query.filter_by(id=int(post_id)).update(
+        {Post.whitelisted: True}, synchronize_session=False
+    )
+    return {"post_id": int(post_id), "updated": int(updated)}
 
 
 def ensure_user_feed_membership_action(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -204,7 +233,8 @@ def create_dev_test_feed_action(params: Dict[str, Any]) -> Dict[str, Any]:
     db.session.flush()
 
     now = datetime.utcnow()
-    post_count = int(params.get("post_count") or 5)
+    # Use a larger default so dev/test feeds exercise paging in the UI
+    post_count = int(params.get("post_count") or 30)
     for i in range(1, post_count + 1):
         guid = f"{params.get('guid_prefix') or 'test-guid'}-{feed.id}-{i}"
         post = Post(
